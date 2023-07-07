@@ -9,6 +9,18 @@ from fastai.learner import Learner
 from fastai.data.core import DataLoaders
 from functools import partial as wrap
 
+class CombinedDataset(Dataset):
+	def __init__(self, images, labels):
+		self.images = images
+		self.labels = labels
+
+	def __len__(self):
+		return len(self.images)
+
+	def __getitem__(self, idx):
+		image = self.images[idx]
+		label = self.labels[idx]
+		return image, label
 class Model(nn.Module):
 	def __init__(self) -> None:
 		self.featurizer = nn.Sequential(
@@ -38,10 +50,10 @@ def main() -> None:
 	input()  # testing
 	# train
 	train(num_epochs, batch_size, data_train, data_val, loss, opt, callbacks)
-def load_data(file: str = 'data') -> Tuple[Dataset, Dataset, Dataset]:
+def load_data(path: str = 'data', compression='.bz2') -> Tuple[Dataset, Dataset, Dataset]:
 	'returns processed data'
-	import pickle
-	return pickle.load(open(file + '/train.pkl', 'rb')), pickle.load(open(file + '/val.pkl', 'rb')), pickle.load(open(file + '/test.pkl', 'rb'))
+	import pickle, bz2
+	return pickle.load(bz2.open(path + '/train.pkl' + compression, 'rb')), pickle.load(bz2.open(path + '/valid.pkl' + compression, 'rb')), pickle.load(bz2.open(path + '/test.pkl' + compression, 'rb'))
 def train(num_epochs: int, batch_size: int, data_train, data_val, loss, opt, callbacks: list):
 	# defining model
 	model = Model()
