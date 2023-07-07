@@ -1,7 +1,8 @@
 import torch, torchinfo, stuff, fastai.callback.schedule
-from typing import Tuple
+from typing import Iterator, BinaryIO
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
+from torchvision.models import alexnet, AlexNet_Weights
 from fastai.callback.all import ShowGraphCallback, EarlyStoppingCallback, CSVLogger, SaveModelCallback
 from fastai.optimizer import OptimWrapper
 from fastai.metrics import accuracy
@@ -13,19 +14,23 @@ class CombinedDataset(Dataset):
 	def __init__(self, images, labels):
 		self.images = images
 		self.labels = labels
-
 	def __len__(self):
 		return len(self.images)
-
 	def __getitem__(self, idx):
 		image = self.images[idx]
 		label = self.labels[idx]
 		return image, label
 class Model(nn.Module):
-	def __init__(self) -> None:
+	def __init__(self, p: float) -> None:
 		# self.featurizer = nn.Sequential()  # deprecated, doing transfer learning instead
 		self.classifier = nn.Sequential(
-
+			nn.Linear(256 * 6 * 6, 1024),
+			nn.Dropout(p),
+			nn.ReLU(),
+			nn.Linear(1024, 512),
+			nn.Dropout(p),
+			nn.ReLU(),
+			nn.Linear(512, 7),
 		)
 	def forward(self, x: torch.Tensor) -> torch.Tensor:
 		# x = self.featurizer(x)
@@ -40,21 +45,36 @@ def main() -> None:
 	num_epochs = 75
 	loss = torch.nn.CrossEntropyLoss
 	opt = torch.optim.Adam
+	model = alexnet(weights=AlexNet_Weights.DEFAULT)  # not the actual model but the model were transferring learning from
 	# "helpers"
-	callbacks = [ShowGraphCallback(), EarlyStoppingCallback(patience=10), CSVLogger('model/model.csv'), SaveModelCallback()]
+	callbacks = [ShowGraphCallback(), EarlyStoppingCallback(patience=10), CSVLogger('model/model.csv'), SaveModelCallback(fname='model/model')]
 	# load data
-	data_train, data_val, data_test = load_data()
-	print(data_train)  # testing
-	input()  # testing
-	# train
-	train(num_epochs, batch_size, data_train, data_val, loss, opt, callbacks)
-def load_data(path: str = 'data', compression='.bz2') -> Tuple[Dataset, Dataset, Dataset]:
-	'returns processed data'
-	import pickle, bz2
-	return pickle.load(bz2.open(path + '/train.pkl' + compression, 'rb')), pickle.load(bz2.open(path + '/valid.pkl' + compression, 'rb')), pickle.load(bz2.open(path + '/test.pkl' + compression, 'rb'))
-def train(num_epochs: int, batch_size: int, data_train, data_val, loss, opt, callbacks: list):
-	# defining model
-	model = Model()
+	data_train, data_val = load_data(compression='')
+	# transfer learning
+	data_train, data_val = transfer_learning((data_train, data_val), model)
+	# init model and train
+	model = Model(0.3)
+	train(model, num_epochs, batch_size, data_train, data_val, loss, opt, callbacks)
+def load_data(path: str = 'data/', files: list[str] = ['train', 'valid'], compression='.bz2') -> Iterator[Dataset]:
+	'loads processed data'
+	import pickle
+	from rich.progress import open
+	# placeholder function that does nothing
+	def helper(x: BinaryIO) -> BinaryIO: return x
+	# open and overwrite `func` if bz2 compression is used
+	if compression == '.bz2':
+		from bz2 import BZ2File
+		helper = BZ2File  # type: ignore
+	# for each file specified, load data
+	for file in files:
+		file = path + file + '.pkl' + compression
+		with open(file, 'rb', description='Loading: ' + file) as file:
+			yield pickle.load(helper(file))
+
+	# return pickle.load(bz2.open(path + '/train.pkl' + compression, 'rb')), pickle.load(bz2.open(path + '/valid.pkl' + compression, 'rb')), pickle.load(bz2.open(path + '/test.pkl' + compression, 'rb'))
+def transfer_learning(datas: list | tuple, model) -> list[Dataset]:
+	return [model.features(data) for data in datas]
+def train(model: nn.Module, num_epochs: int, batch_size: int, data_train, data_val, loss, opt, callbacks: list):
 	# wrapping data
 	data = DataLoaders(DataLoader(data_train, batch_size, True), DataLoader(data_val, batch_size, True))
 	# wrapping optimizer
