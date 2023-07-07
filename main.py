@@ -23,14 +23,12 @@ class CombinedDataset(Dataset):
 		return image, label
 class Model(nn.Module):
 	def __init__(self) -> None:
-		self.featurizer = nn.Sequential(
-
-		)
+		# self.featurizer = nn.Sequential()  # deprecated, doing transfer learning instead
 		self.classifier = nn.Sequential(
 
 		)
 	def forward(self, x: torch.Tensor) -> torch.Tensor:
-		x = self.featurizer(x)
+		# x = self.featurizer(x)
 		x = self.classifier(x)
 		return x
 
