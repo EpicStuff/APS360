@@ -1,5 +1,5 @@
 import torch, torchinfo, stuff, fastai.callback.schedule
-from typing import Iterator, BinaryIO
+from typing import Iterator, BinaryIO, Sequence
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from torchvision.models import alexnet, AlexNet_Weights
@@ -10,16 +10,6 @@ from fastai.learner import Learner
 from fastai.data.core import DataLoaders
 from functools import partial as wrap
 
-class CombinedDataset(Dataset):
-	def __init__(self, images, labels):
-		self.images = images
-		self.labels = labels
-	def __len__(self):
-		return len(self.images)
-	def __getitem__(self, idx):
-		image = self.images[idx]
-		label = self.labels[idx]
-		return image, label
 class Model(nn.Module):
 	def __init__(self, p: float) -> None:
 		# self.featurizer = nn.Sequential()  # deprecated, doing transfer learning instead
@@ -55,10 +45,12 @@ def main() -> None:
 	# init model and train
 	model = Model(0.3)
 	train(model, num_epochs, batch_size, data_train, data_val, loss, opt, callbacks)
-def load_data(path: str = 'data/', files: list[str] = ['train', 'valid'], compression='.bz2') -> Iterator[Dataset]:
+def load_data(files: Sequence[str] = ['train', 'valid'], path: str = 'data/', compression='.bz2') -> Iterator[Dataset]:
 	'loads processed data'
 	import pickle
 	from rich.progress import open
+	# over complicated solution to get pickle.load to work
+	globals()['CombinedDataset'] = __import__('ipynb.fs.defs.Data', fromlist=['CombinedDataset']).CombinedDataset
 	# placeholder function that does nothing
 	def helper(x: BinaryIO) -> BinaryIO: return x
 	# open and overwrite `func` if bz2 compression is used
@@ -73,7 +65,7 @@ def load_data(path: str = 'data/', files: list[str] = ['train', 'valid'], compre
 
 	# return pickle.load(bz2.open(path + '/train.pkl' + compression, 'rb')), pickle.load(bz2.open(path + '/valid.pkl' + compression, 'rb')), pickle.load(bz2.open(path + '/test.pkl' + compression, 'rb'))
 def transfer_learning(datas: list | tuple, model) -> list[Dataset]:
-	return [model.features(data) for data in datas]
+	return [model.features(data.images) for data in datas]
 def train(model: nn.Module, num_epochs: int, batch_size: int, data_train, data_val, loss, opt, callbacks: list):
 	# wrapping data
 	data = DataLoaders(DataLoader(data_train, batch_size, True), DataLoader(data_val, batch_size, True))
