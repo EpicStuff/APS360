@@ -5,7 +5,7 @@ from functools import partial as wrap
 from ipynb.fs.defs.Data import CombinedDataset
 from torch import nn, Tensor
 from torch.utils.data import DataLoader, Dataset
-from torchvision.models import alexnet, AlexNet_Weights
+from torchvision import models as m
 from torchinfo import summary
 from fastai.callback.all import ShowGraphCallback, EarlyStoppingCallback, CSVLogger, SaveModelCallback
 from fastai.optimizer import OptimWrapper
@@ -47,7 +47,7 @@ def main() -> None:
 	num_epochs = 50
 	loss = torch.nn.CrossEntropyLoss
 	opt = torch.optim.Adam
-	parent = alexnet(weights=AlexNet_Weights.DEFAULT).features  # not the actual model but the model were transferring learning from
+	parent = m.alexnet(weights=m.AlexNet_Weights.DEFAULT).features  # not the actual model but the model were transferring learning from
 	dropout_prob = 0.3
 	# load data
 	data_train, data_val = load_data(compression='')
