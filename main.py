@@ -1,6 +1,9 @@
 import torch, torchinfo, stuff, fastai.callback.schedule
 from typing import Iterator, BinaryIO, Sequence
-from torch import nn
+from pathlib import Path
+from functools import partial as wrap
+from ipynb.fs.defs.Data import CombinedDataset
+from torch import nn, Tensor
 from torch.utils.data import DataLoader, Dataset
 from torchvision.models import alexnet, AlexNet_Weights
 from fastai.callback.all import ShowGraphCallback, EarlyStoppingCallback, CSVLogger, SaveModelCallback
@@ -8,12 +11,14 @@ from fastai.optimizer import OptimWrapper
 from fastai.metrics import accuracy
 from fastai.learner import Learner
 from fastai.data.core import DataLoaders
-from functools import partial as wrap
 
 class Model(nn.Module):
-	def __init__(self, p: float) -> None:
-		# self.featurizer = nn.Sequential()  # deprecated, doing transfer learning instead
+	def __init__(self, p: float, parent) -> None:
+		super().__init__()
+		self.parent = parent.features
+		# self.featurizer = nn.Sequential()
 		self.classifier = nn.Sequential(
+			nn.Flatten(),
 			nn.Linear(256 * 6 * 6, 1024),
 			nn.Dropout(p),
 			nn.ReLU(),
@@ -23,6 +28,7 @@ class Model(nn.Module):
 			nn.Linear(512, 7),
 		)
 	def forward(self, x: torch.Tensor) -> torch.Tensor:
+		x = self.parent(x)
 		# x = self.featurizer(x)
 		x = self.classifier(x)
 		return x
@@ -30,27 +36,28 @@ class Model(nn.Module):
 def main() -> None:
 	# reproducibility
 	stuff.manual_seed(64, True)
-	# hyperparameters
-	batch_size = 256
-	num_epochs = 75
+	# hyperparameters, you should also tweak the layers in the model
+	batch_size = 1024
+	num_epochs = 5
 	loss = torch.nn.CrossEntropyLoss
 	opt = torch.optim.Adam
 	model = alexnet(weights=AlexNet_Weights.DEFAULT)  # not the actual model but the model were transferring learning from
-	# "helpers"
-	callbacks = [ShowGraphCallback(), EarlyStoppingCallback(patience=10), CSVLogger('model/model.csv'), SaveModelCallback(fname='model/model')]
+	dropout_prob = 0.3
 	# load data
 	data_train, data_val = load_data(compression='')
-	# transfer learning
-	data_train, data_val = transfer_learning((data_train, data_val), model)
 	# init model and train
-	model = Model(0.3)
-	train(model, num_epochs, batch_size, data_train, data_val, loss, opt, callbacks)
+	model = Model(dropout_prob, model)
+	# debug
+	torchinfo.summary(model.parent, (1, 3, 224, 224))
+	torchinfo.summary(model.classifier, (1, 256 * 6 * 6))
+	# training
+	train(model, num_epochs, batch_size, data_train, data_val, loss, opt)
 def load_data(files: Sequence[str] = ['train', 'valid'], path: str = 'data/', compression='.bz2') -> Iterator[Dataset]:
 	'loads processed data'
 	import pickle
 	from rich.progress import open
-	# over complicated solution to get pickle.load to work
-	globals()['CombinedDataset'] = __import__('ipynb.fs.defs.Data', fromlist=['CombinedDataset']).CombinedDataset
+	# # over complicated (and kinda sketchy) solution to get pickle.load to work
+	# globals()['CombinedDataset'] = __import__('ipynb.fs.defs.Data', fromlist=['CombinedDataset']).CombinedDataset
 	# placeholder function that does nothing
 	def helper(x: BinaryIO) -> BinaryIO: return x
 	# open and overwrite `func` if bz2 compression is used
@@ -61,23 +68,34 @@ def load_data(files: Sequence[str] = ['train', 'valid'], path: str = 'data/', co
 	for file in files:
 		file = path + file + '.pkl' + compression
 		with open(file, 'rb', description='Loading: ' + file) as file:
-			yield pickle.load(helper(file))
-
-	# return pickle.load(bz2.open(path + '/train.pkl' + compression, 'rb')), pickle.load(bz2.open(path + '/valid.pkl' + compression, 'rb')), pickle.load(bz2.open(path + '/test.pkl' + compression, 'rb'))
-def transfer_learning(datas: list | tuple, model) -> list[Dataset]:
-	return [model.features(data.images) for data in datas]
-def train(model: nn.Module, num_epochs: int, batch_size: int, data_train, data_val, loss, opt, callbacks: list):
+			yield pickle.load(helper(file)).to('labels', int)
+def train(model: nn.Module, num_epochs: int, batch_size: int, data_train, data_val, loss, opt):
+	# "helpers"
+	Path('models').mkdir(exist_ok=True)
+	callbacks = [ShowGraphCallback(), EarlyStoppingCallback(patience=10), CSVLogger('models/model.csv'), SaveModelCallback(fname='model')]
 	# wrapping data
 	data = DataLoaders(DataLoader(data_train, batch_size, True), DataLoader(data_val, batch_size, True))
 	# wrapping optimizer
 	opt = wrap(OptimWrapper, opt=opt)
 	# defining learner and training, using mixed precision training to speed things ups
-	learner = Learner(data, model, loss(), opt, metrics=accuracy).to_fp16()
+	learner = Learner(data, model, loss(), opt, metrics=accuracy).to_fp16()  # type: ignore
 	with learner.no_logging():
 		learner.fit_one_cycle(num_epochs, cbs=callbacks)
 	# print results
 	for name, val in zip(learner.recorder.metric_names[1:], learner.recorder.values[-1]):
 		print(name, ': ', val, ', ', sep='', end='')
+def test():
+	# def transfer_learning(data: Dataset, model, batch_size: int = 2048, device='cpu') -> Iterator[Tensor]:
+	# 'extracts features from data using transfer learning'
+	# with torch.no_grad():
+	# 	model = model.to(device)
+	# 	for imgs, labels in DataLoader(data, batch_size):
+	# 		imgs = imgs.to(device).to(torch.float32)
+	# 		yield model.features(imgs).to('cpu')
+	# # transfer learning
+	# data_train.images = list(transfer_learning(data_train, model, device='cuda'))
+	# data_val.images = list(transfer_learning(data_val, model, device='cuda'))
+	pass
 
 
 if __name__ == '__main__':
