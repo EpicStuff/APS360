@@ -1,4 +1,4 @@
-import torch, torchinfo, stuff, fastai.callback.schedule
+import torch, stuff, fastai.callback.schedule
 from typing import Iterator, BinaryIO, Sequence
 from pathlib import Path
 from functools import partial as wrap
@@ -6,6 +6,7 @@ from ipynb.fs.defs.Data import CombinedDataset
 from torch import nn, Tensor
 from torch.utils.data import DataLoader, Dataset
 from torchvision.models import alexnet, AlexNet_Weights
+from torchinfo import summary
 from fastai.callback.all import ShowGraphCallback, EarlyStoppingCallback, CSVLogger, SaveModelCallback
 from fastai.optimizer import OptimWrapper
 from fastai.metrics import accuracy
@@ -13,13 +14,17 @@ from fastai.learner import Learner
 from fastai.data.core import DataLoaders
 
 class Model(nn.Module):
-	def __init__(self, p: float, parent) -> None:
+	def __init__(self, p: float, parent, size: int) -> None:
 		super().__init__()
-		self.parent = parent.features
-		# self.featurizer = nn.Sequential()
-		self.classifier = nn.Sequential(
+		# for layer in parent.children():
+		# 	for param in layer.parameters():
+		# 		param.requires_grad = False
+		self.parent = parent
+		self.featurizer = nn.Sequential(
 			nn.Flatten(),
-			nn.Linear(256 * 6 * 6, 1024),
+		)
+		self.classifier = nn.Sequential(
+			nn.Linear(size, 1024),
 			nn.Dropout(p),
 			nn.ReLU(),
 			nn.Linear(1024, 512),
@@ -28,8 +33,9 @@ class Model(nn.Module):
 			nn.Linear(512, 7),
 		)
 	def forward(self, x: torch.Tensor) -> torch.Tensor:
-		x = self.parent(x)
-		# x = self.featurizer(x)
+		with torch.no_grad():
+			x = self.parent(x)
+		x = self.featurizer(x)
 		x = self.classifier(x)
 		return x
 
@@ -38,20 +44,21 @@ def main() -> None:
 	stuff.manual_seed(64, True)
 	# hyperparameters, you should also tweak the layers in the model
 	batch_size = 1024
-	num_epochs = 5
+	num_epochs = 50
 	loss = torch.nn.CrossEntropyLoss
 	opt = torch.optim.Adam
-	model = alexnet(weights=AlexNet_Weights.DEFAULT)  # not the actual model but the model were transferring learning from
+	parent = alexnet(weights=AlexNet_Weights.DEFAULT).features  # not the actual model but the model were transferring learning from
 	dropout_prob = 0.3
 	# load data
 	data_train, data_val = load_data(compression='')
 	# init model and train
-	model = Model(dropout_prob, model)
+	model = Model(dropout_prob, parent, 256 * 6 * 6)
 	# debug
-	torchinfo.summary(model.parent, (1, 3, 224, 224))
-	torchinfo.summary(model.classifier, (1, 256 * 6 * 6))
+	summary(model.parent, (1, 3, 224, 224))
+	summary(model.classifier, (1, 256 * 6 * 6))
 	# training
-	train(model, num_epochs, batch_size, data_train, data_val, loss, opt)
+	name = stuff.generate_name(batch_size, loss, opt, 'alexnet', dropout_prob)
+	train(name, model, num_epochs, batch_size, data_train, data_val, loss, opt)
 def load_data(files: Sequence[str] = ['train', 'valid'], path: str = 'data/', compression='.bz2') -> Iterator[Dataset]:
 	'loads processed data'
 	import pickle
@@ -69,10 +76,10 @@ def load_data(files: Sequence[str] = ['train', 'valid'], path: str = 'data/', co
 		file = path + file + '.pkl' + compression
 		with open(file, 'rb', description='Loading: ' + file) as file:
 			yield pickle.load(helper(file)).to('labels', int)
-def train(model: nn.Module, num_epochs: int, batch_size: int, data_train, data_val, loss, opt):
+def train(name: str, model: nn.Module, num_epochs: int, batch_size: int, data_train, data_val, loss, opt, verbose: int = 0):
 	# "helpers"
 	Path('models').mkdir(exist_ok=True)
-	callbacks = [ShowGraphCallback(), EarlyStoppingCallback(patience=10), CSVLogger('models/model.csv'), SaveModelCallback(fname='model')]
+	callbacks = [ShowGraphCallback(), EarlyStoppingCallback(patience=16), CSVLogger('models/' + name + '.csv'), SaveModelCallback(fname=name)]
 	# wrapping data
 	data = DataLoaders(DataLoader(data_train, batch_size, True), DataLoader(data_val, batch_size, True))
 	# wrapping optimizer
@@ -82,8 +89,10 @@ def train(model: nn.Module, num_epochs: int, batch_size: int, data_train, data_v
 	with learner.no_logging():
 		learner.fit_one_cycle(num_epochs, cbs=callbacks)
 	# print results
-	for name, val in zip(learner.recorder.metric_names[1:], learner.recorder.values[-1]):
-		print(name, ': ', val, ', ', sep='', end='')
+	if verbose:
+		for name, val in zip(learner.recorder.metric_names[1:], learner.recorder.values[-1]):
+			print(name, ': ', val, ', ', sep='', end='')
+	return learner
 def test():
 	# def transfer_learning(data: Dataset, model, batch_size: int = 2048, device='cpu') -> Iterator[Tensor]:
 	# 'extracts features from data using transfer learning'
