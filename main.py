@@ -13,6 +13,21 @@ from fastai.metrics import accuracy
 from fastai.learner import Learner
 from fastai.data.core import DataLoaders
 
+
+class CombinedDataset(Dataset):
+	def __init__(self, images: list[np.ndarray], labels: torch.Tensor):
+		self.images = torch.stack(list(map(lambda x: torch.from_numpy(x).to(torch.float16), images)))
+		self.labels = labels.to(torch.int8)  # to reduce file size when saved
+	def __len__(self):
+		return len(self.images)
+	def __getitem__(self, idx: int):
+		return self.images[idx], self.labels[idx]
+	def to(self, who: str, what):
+		if 'images' in who:
+			self.images = self.images.to(what)
+		if 'labels' in who:
+			self.labels = self.labels.to(what)
+		return self
 class Model(nn.Module):
 	def __init__(self, p: float, parent, size: int) -> None:
 		super().__init__()
@@ -59,7 +74,7 @@ def main() -> None:
 	# training
 	name = stuff.generate_name(batch_size, loss, opt, 'alexnet', dropout_prob)
 	train(name, model, num_epochs, batch_size, data_train, data_val, loss, opt)
-def load_data(files: Sequence[str] = ['train', 'valid'], path: str = 'data/', compression='.bz2') -> Iterator[Dataset]:
+def load_data(files: Sequence[str] = ['train', 'valid'], path: str = 'data/', compression='') -> Iterator[Dataset]:
 	'loads processed data'
 	import pickle
 	from rich.progress import open
