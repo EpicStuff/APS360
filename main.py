@@ -2,7 +2,6 @@ import torch, stuff, fastai.callback.schedule
 from typing import Iterator, BinaryIO, Sequence
 from pathlib import Path
 from functools import partial as wrap
-from ipynb.fs.defs.Data import CombinedDataset
 from torch import nn, Tensor
 from torch.utils.data import DataLoader, Dataset
 from torchvision import models as m
