@@ -1,4 +1,4 @@
-import torch, stuff, fastai.callback.schedule
+import torch, stuff, fastai.callback.schedule, numpy as np
 from typing import Iterator, BinaryIO, Sequence
 from pathlib import Path
 from functools import partial as wrap
