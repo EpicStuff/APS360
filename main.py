@@ -90,7 +90,7 @@ def load_data(files: Sequence[str] = ['train', 'valid'], path: str = 'data/', co
 		file = path + file + '.pkl' + compression
 		with open(file, 'rb', description='Loading: ' + file) as file:
 			yield pickle.load(helper(file)).to('labels', int)
-def train(name: str, model: nn.Module, num_epochs: int, batch_size: int, data_train, data_val, loss, opt, verbose: int = 0):
+def train(name: str, model: nn.Module, num_epochs: int, batch_size: int, data_train, data_val, loss, opt, verbose: int = 0, float16: bool = True):
 	# "helpers"
 	Path('models').mkdir(exist_ok=True)
 	callbacks = [ShowGraphCallback(), EarlyStoppingCallback(patience=16), CSVLogger('models/' + name + '.csv'), SaveModelCallback(fname=name)]
@@ -99,7 +99,12 @@ def train(name: str, model: nn.Module, num_epochs: int, batch_size: int, data_tr
 	# wrapping optimizer
 	opt = wrap(OptimWrapper, opt=opt)
 	# defining learner and training, using mixed precision training to speed things ups
-	learner = Learner(data, model, loss(), opt, metrics=accuracy).to_fp16()  # type: ignore
+	learner = Learner(data, model, loss(), opt, metrics=accuracy)  # type: ignore
+	if float16:
+		learner = learner.to_fp16()
+	else:
+		data_train = data_train.to('images', torch.float32)
+		data_val = data_val.to('images', torch.float32)
 	with learner.no_logging():
 		learner.fit_one_cycle(num_epochs, cbs=callbacks)
 	# print results
