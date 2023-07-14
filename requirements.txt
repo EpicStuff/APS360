@@ -3,4 +3,5 @@ torchvision -f https://download.pytorch.org/whl/cu118
 fastai
 torchinfo
 ipynb
+ipywidgets
 rich

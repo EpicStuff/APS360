@@ -25,7 +25,7 @@ def manual_seed(seed: int, cuda=False):
 	random.seed(seed)  # Python
 	np.random.seed(seed)  # Numpy vars
 	torch.manual_seed(seed)  # PyTorch vars
-	# torch.use_deterministic_algorithms(True)  # rasing error which i have no idea how to solve
+	# torch.use_deterministic_algorithms(True)  # raises error which i have no idea how to solve
 	if cuda:  # GPU vars
 		torch.cuda.manual_seed(seed)
 		torch.cuda.manual_seed_all(seed)
