@@ -58,7 +58,7 @@ def main() -> None:
 	stuff.manual_seed(64, True)
 	# hyperparameters, you should also tweak the layers in the model
 	batch_size = 1024
-	num_epochs = 50
+	num_epochs = 5
 	loss = torch.nn.CrossEntropyLoss
 	opt = torch.optim.Adam
 	parent = m.alexnet(weights=m.AlexNet_Weights.DEFAULT).features  # not the actual model but the model were transferring learning from
@@ -113,18 +113,26 @@ def train(name: str, model: nn.Module, num_epochs: int, batch_size: int, data_tr
 			print(name, ': ', val, ', ', sep='', end='')
 	return learner
 def test():
-	# def transfer_learning(data: Dataset, model, batch_size: int = 2048, device='cpu') -> Iterator[Tensor]:
-	# 'extracts features from data using transfer learning'
-	# with torch.no_grad():
-	# 	model = model.to(device)
-	# 	for imgs, labels in DataLoader(data, batch_size):
-	# 		imgs = imgs.to(device).to(torch.float32)
-	# 		yield model.features(imgs).to('cpu')
-	# # transfer learning
-	# data_train.images = list(transfer_learning(data_train, model, device='cuda'))
-	# data_val.images = list(transfer_learning(data_val, model, device='cuda'))
-	pass
+	# reproducibility
+	stuff.manual_seed(64, True)
+	# load data
+	data_test = list(load_data(['test'], compression=''))[0].to('images', torch.float32)
+	# setup the model
+	parent = m.alexnet(weights=m.AlexNet_Weights.DEFAULT).features  # not the actual model but the model were transferring learning from
+	dropout_prob = 0.3
+	batch_size = 1024
+	loss = torch.nn.CrossEntropyLoss
+	opt = wrap(OptimWrapper, opt=torch.optim.Adam)
+	# init model and train
+	model = Model(dropout_prob, parent, 256 * 6 * 6)
+	# load model
+	model.load_state_dict(torch.load('models/1024_CEL_Adam_alexnet_0.3.pth'))
+	data = DataLoaders(DataLoader(data_test, batch_size, True), DataLoader(data_test, batch_size, True))
+	learner = Learner(data, model, loss(), opt, metrics=accuracy)
+	# test model
+	return learner.validate()
 
 
 if __name__ == '__main__':
-	main()
+	# main()
+	print(test())
