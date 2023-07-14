@@ -112,7 +112,7 @@ def train(name: str, model: nn.Module, num_epochs: int, batch_size: int, data_tr
 		for name, val in zip(learner.recorder.metric_names[1:], learner.recorder.values[-1]):
 			print(name, ': ', val, ', ', sep='', end='')
 	return learner
-def test():
+def test(name: str):
 	# reproducibility
 	stuff.manual_seed(64, True)
 	# load data
@@ -126,7 +126,7 @@ def test():
 	# init model and train
 	model = Model(dropout_prob, parent, 256 * 6 * 6)
 	# load model
-	model.load_state_dict(torch.load('models/1024_CEL_Adam_alexnet_0.3.pth'))
+	model.load_state_dict(torch.load(f'models/{name}.pth'))
 	data = DataLoaders(DataLoader(data_test, batch_size, True), DataLoader(data_test, batch_size, True))
 	learner = Learner(data, model, loss(), opt, metrics=accuracy)
 	# test model
