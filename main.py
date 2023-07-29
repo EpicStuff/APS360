@@ -29,11 +29,19 @@ class CombinedDataset(Dataset):
 			self.labels = self.labels.to(what)
 		return self
 class Model(nn.Module):
-	def __init__(self, parent, featurizer, classifier) -> None:
+	def __init__(self, p: float, parent, size: int) -> None:
 		super().__init__()
+		# for layer in parent.children():
+		# 	for param in layer.parameters():
+		# 		param.requires_grad = False
 		self.parent = parent
-		self.featurizer = featurizer
-		self.classifier = classifier
+		self.featurizer = nn.Sequential(
+			# nn.Flatten(),
+		)
+		self.classifier = nn.Sequential(
+			nn.Dropout(p, inplace=True),
+			nn.Linear(size, 7),
+		)
 	def forward(self, x: torch.Tensor) -> torch.Tensor:
 		with torch.no_grad():
 			x = self.parent(x)
@@ -48,30 +56,23 @@ params = {
 	'num_epochs': 50,
 	'loss': torch.nn.CrossEntropyLoss,
 	'opt': torch.optim.Adam,
-	'parent': m.convnext_base(weights='DEFAULT'),
-	'parent_name': 'convnext_base_modified',
-	'featurizer': nn.Sequential(),
+	'parent': m.convnext_small(weights='DEFAULT'),
 	'dropout_prob': 0,
 }
 params['parent'].classifier[2] = nn.Identity()  # disable parent classifier
-params['parent_out'] = lambda: summary(params['parent'], (1, 3, 224, 224)).summary_list[-1].output_size[1]
-params['name'] = lambda: stuff.generate_name(params['parent_name'], params['dropout_prob'])
-params['classifier'] = nn.Sequential(
-	nn.Dropout(params['dropout_prob']),
-	nn.Linear(params['parent_out'](), 2),
-)
-
-def main(params: dict = params, data: list | None = None):
+params['parent_out'] = summary(params['parent'], (1, 3, 224, 224)).summary_list[-1].output_size[1]
+params['name'] = stuff.generate_name('convnext_small', params['dropout_prob'])
+def main(params: dict = params) -> None:
 	# reproducibility
 	stuff.manual_seed(64, True)
 	# load data
-	data_train, data_val = data or load_data()
+	data_train, data_val = load_data()
 	# init model
-	model = Model(params['parent'], params['featurizer'], params['classifier'])
+	model = Model(params['dropout_prob'], params['parent'], params['parent_out'])
 	# debug
 	summary(model, (1, 3, 224, 224))
 	# training
-	return train(params['name'](), model, params['num_epochs'], params['batch_size'], data_train, data_val, params['loss'], params['opt'])
+	train(params['name'], model, params['num_epochs'], params['batch_size'], data_train, data_val, params['loss'], params['opt'])
 def load_data(files: Sequence[str] = ['train', 'valid'], path: str = 'data/', compression='') -> Iterator[Dataset]:
 	'loads processed data'
 	import pickle
