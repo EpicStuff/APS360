@@ -2,7 +2,7 @@ import torch, stuff, fastai.callback.schedule, numpy as np
 from typing import Iterator, BinaryIO, Sequence
 from pathlib import Path
 from functools import partial as wrap
-from torch import nn, Tensor
+from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from torchvision import models as m
 from torchinfo import summary
@@ -10,7 +10,8 @@ from fastai.callback.all import ShowGraphCallback, EarlyStoppingCallback, CSVLog
 from fastai.optimizer import OptimWrapper
 from fastai.metrics import accuracy
 from fastai.learner import Learner
-from fastai.data.core import DataLoaders
+from fastai.data.all import DataLoaders, DataLoader
+from fastai.vision.all import ImageDataLoaders
 
 
 class CombinedDataset(Dataset):
@@ -35,16 +36,11 @@ class Model(nn.Module):
 		# 		param.requires_grad = False
 		self.parent = parent
 		self.featurizer = nn.Sequential(
-			nn.Flatten(),
+			# nn.Flatten(),
 		)
 		self.classifier = nn.Sequential(
-			nn.Linear(size, 1024),
-			nn.Dropout(p),
-			nn.ReLU(),
-			nn.Linear(1024, 512),
-			nn.Dropout(p),
-			nn.ReLU(),
-			nn.Linear(512, 7),
+			nn.Dropout(p, inplace=True),
+			nn.Linear(size, 7),
 		)
 	def forward(self, x: torch.Tensor) -> torch.Tensor:
 		with torch.no_grad():
@@ -53,32 +49,34 @@ class Model(nn.Module):
 		x = self.classifier(x)
 		return x
 
-def main() -> None:
+
+# hyperparameters
+params = {
+	'batch_size': 256,
+	'num_epochs': 50,
+	'loss': torch.nn.CrossEntropyLoss,
+	'opt': torch.optim.Adam,
+	'parent': m.convnext_small(weights='DEFAULT'),
+	'dropout_prob': 0,
+}
+params['parent'].classifier[2] = nn.Identity()  # disable parent classifier
+params['parent_out'] = summary(params['parent'], (1, 3, 224, 224)).summary_list[-1].output_size[1]
+params['name'] = stuff.generate_name('convnext_small', params['dropout_prob'])
+def main(params: dict = params) -> None:
 	# reproducibility
 	stuff.manual_seed(64, True)
-	# hyperparameters, you should also tweak the layers in the model
-	batch_size = 1024
-	num_epochs = 5
-	loss = torch.nn.CrossEntropyLoss
-	opt = torch.optim.Adam
-	parent = m.alexnet(weights=m.AlexNet_Weights.DEFAULT).features  # not the actual model but the model were transferring learning from
-	dropout_prob = 0.3
 	# load data
-	data_train, data_val = load_data(compression='')
-	# init model and train
-	model = Model(dropout_prob, parent, 256 * 6 * 6)
+	data_train, data_val = load_data()
+	# init model
+	model = Model(params['dropout_prob'], params['parent'], params['parent_out'])
 	# debug
-	summary(model.parent, (1, 3, 224, 224))
-	summary(model.classifier, (1, 256 * 6 * 6))
+	summary(model, (1, 3, 224, 224))
 	# training
-	name = stuff.generate_name(batch_size, loss, opt, 'alexnet', dropout_prob)
-	train(name, model, num_epochs, batch_size, data_train, data_val, loss, opt)
+	train(params['name'], model, params['num_epochs'], params['batch_size'], data_train, data_val, params['loss'], params['opt'])
 def load_data(files: Sequence[str] = ['train', 'valid'], path: str = 'data/', compression='') -> Iterator[Dataset]:
 	'loads processed data'
 	import pickle
 	from rich.progress import open
-	# # over complicated (and kinda sketchy) solution to get pickle.load to work
-	# globals()['CombinedDataset'] = __import__('ipynb.fs.defs.Data', fromlist=['CombinedDataset']).CombinedDataset
 	# placeholder function that does nothing
 	def helper(x: BinaryIO) -> BinaryIO: return x
 	# open and overwrite `func` if bz2 compression is used
@@ -93,9 +91,9 @@ def load_data(files: Sequence[str] = ['train', 'valid'], path: str = 'data/', co
 def train(name: str, model: nn.Module, num_epochs: int, batch_size: int, data_train, data_val, loss, opt, verbose: int = 0, float16: bool = True):
 	# "helpers"
 	Path('models').mkdir(exist_ok=True)
-	callbacks = [ShowGraphCallback(), EarlyStoppingCallback(patience=16), CSVLogger('models/' + name + '.csv'), SaveModelCallback(fname=name)]
+	callbacks = [ShowGraphCallback(), EarlyStoppingCallback(patience=3), CSVLogger('models/' + name + '.csv'), SaveModelCallback(fname=name)]
 	# wrapping data
-	data = DataLoaders(DataLoader(data_train, batch_size, True), DataLoader(data_val, batch_size, True))
+	data = ImageDataLoaders(DataLoader(data_train, batch_size, shuffle=True), DataLoader(data_val, batch_size, shuffle=True))
 	# wrapping optimizer
 	opt = wrap(OptimWrapper, opt=opt)
 	# defining learner and training, using mixed precision training to speed things ups
@@ -105,34 +103,33 @@ def train(name: str, model: nn.Module, num_epochs: int, batch_size: int, data_tr
 	else:
 		data_train = data_train.to('images', torch.float32)
 		data_val = data_val.to('images', torch.float32)
-	with learner.no_logging():
-		learner.fit_one_cycle(num_epochs, cbs=callbacks)
+	learner.fit_one_cycle(num_epochs, cbs=callbacks)
 	# print results
 	if verbose:
 		for name, val in zip(learner.recorder.metric_names[1:], learner.recorder.values[-1]):
 			print(name, ': ', val, ', ', sep='', end='')
 	return learner
-def test(name: str):
+def load_model(name: str, params: dict = params):
+	# init model and train
+	model = Model(params['dropout_prob'], params['parent'], params['parent_out'])
+	# load model
+	model.load_state_dict(torch.load(f'models/{name}.pth'))
+	model.eval()
+	return model
+def test_model(name: str, params: dict = params):
 	# reproducibility
 	stuff.manual_seed(64, True)
 	# load data
 	data_test = list(load_data(['test'], compression=''))[0].to('images', torch.float32)
-	# setup the model
-	parent = m.alexnet(weights=m.AlexNet_Weights.DEFAULT).features  # not the actual model but the model were transferring learning from
-	dropout_prob = 0.3
-	batch_size = 1024
-	loss = torch.nn.CrossEntropyLoss
-	opt = wrap(OptimWrapper, opt=torch.optim.Adam)
-	# init model and train
-	model = Model(dropout_prob, parent, 256 * 6 * 6)
+	# init model
+	model = Model(params['dropout_prob'], params['parent'], params['parent_out'])
 	# load model
 	model.load_state_dict(torch.load(f'models/{name}.pth'))
-	data = DataLoaders(DataLoader(data_test, batch_size, True), DataLoader(data_test, batch_size, True))
-	learner = Learner(data, model, loss(), opt, metrics=accuracy)
+	data = DataLoaders(DataLoader(data_test, params['batch_size'], True), DataLoader(data_test, params['batch_size'], True))
+	learner = Learner(data, model, params['loss'](), params['opt'], metrics=accuracy)
 	# test model
 	return learner.validate()
 
 
 if __name__ == '__main__':
-	# main()
-	print(test())
+	main()
