@@ -36,11 +36,12 @@ class Model(nn.Module):
 		# 		param.requires_grad = False
 		self.parent = parent
 		self.featurizer = nn.Sequential(
-			# nn.Flatten(),
 		)
 		self.classifier = nn.Sequential(
+			nn.Linear(size, 256),
+			nn.Mish(),
+			nn.Linear(256, 7),
 			nn.Dropout(p, inplace=True),
-			nn.Linear(size, 7),
 		)
 	def forward(self, x: torch.Tensor) -> torch.Tensor:
 		with torch.no_grad():
@@ -54,25 +55,28 @@ class Model(nn.Module):
 params = {
 	'batch_size': 256,
 	'num_epochs': 50,
-	'loss': torch.nn.CrossEntropyLoss,
+	'loss': nn.CrossEntropyLoss,
 	'opt': torch.optim.Adam,
-	'parent': m.convnext_small(weights='DEFAULT'),
+	'parent_name': 'convnext-base_2-layers-256-mish',
+	'parent': m.convnext_base(weights='DEFAULT'),
 	'dropout_prob': 0,
 }
 params['parent'].classifier[2] = nn.Identity()  # disable parent classifier
-params['parent_out'] = summary(params['parent'], (1, 3, 224, 224)).summary_list[-1].output_size[1]
-params['name'] = stuff.generate_name('convnext_small', params['dropout_prob'])
-def main(params: dict = params) -> None:
+params['parent_out'] = lambda x='parent': summary(params[x], (1, 3, 224, 224)).summary_list[-1].output_size[1]
+params['name'] = lambda: stuff.generate_name(params['parent_name'], params['dropout_prob'])
+
+def main(params: dict = params, data=None, verbose=0) -> None:
 	# reproducibility
 	stuff.manual_seed(64, True)
 	# load data
-	data_train, data_val = load_data()
+	data_train, data_val = data or load_data()
 	# init model
-	model = Model(params['dropout_prob'], params['parent'], params['parent_out'])
+	model = Model(params['dropout_prob'], params['parent'], params['parent_out']()).to('cuda')
 	# debug
-	summary(model, (1, 3, 224, 224))
+	if verbose:
+		print(summary(model, (1, 3, 224, 224)))
 	# training
-	train(params['name'], model, params['num_epochs'], params['batch_size'], data_train, data_val, params['loss'], params['opt'])
+	train(params['name'](), model, params['num_epochs'], params['batch_size'], data_train, data_val, params['loss'], params['opt'])
 def load_data(files: Sequence[str] = ['train', 'valid'], path: str = 'data/', compression='') -> Iterator[Dataset]:
 	'loads processed data'
 	import pickle
@@ -91,7 +95,7 @@ def load_data(files: Sequence[str] = ['train', 'valid'], path: str = 'data/', co
 def train(name: str, model: nn.Module, num_epochs: int, batch_size: int, data_train, data_val, loss, opt, verbose: int = 0, float16: bool = True):
 	# "helpers"
 	Path('models').mkdir(exist_ok=True)
-	callbacks = [ShowGraphCallback(), EarlyStoppingCallback(patience=3), CSVLogger('models/' + name + '.csv'), SaveModelCallback(fname=name)]
+	callbacks = [ShowGraphCallback(), EarlyStoppingCallback(patience=8), CSVLogger('models/' + name + '.csv'), SaveModelCallback(fname=name)]
 	# wrapping data
 	data = ImageDataLoaders(DataLoader(data_train, batch_size, shuffle=True), DataLoader(data_val, batch_size, shuffle=True))
 	# wrapping optimizer
