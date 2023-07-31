@@ -38,10 +38,10 @@ class Model(nn.Module):
 		self.featurizer = nn.Sequential(
 		)
 		self.classifier = nn.Sequential(
-			nn.Linear(size, 256),
-			nn.Mish(),
-			nn.Linear(256, 7),
+			nn.Linear(size, 512),
 			nn.Dropout(p, inplace=True),
+			nn.Mish(),
+			nn.Linear(512, 7),
 		)
 	def forward(self, x: torch.Tensor) -> torch.Tensor:
 		with torch.no_grad():
@@ -53,30 +53,33 @@ class Model(nn.Module):
 
 # hyperparameters
 params = {
-	'batch_size': 256,
-	'num_epochs': 50,
+	'batch_size': 1024,
+	'num_epochs': 6,
 	'loss': nn.CrossEntropyLoss,
 	'opt': torch.optim.Adam,
-	'parent_name': 'convnext-base_2-layers-256-mish',
-	'parent': m.convnext_base(weights='DEFAULT'),
-	'dropout_prob': 0,
+	'parent_name': 'data-plus_convnext-small_2-layers-512-mish',
+	'parent': m.convnext_small(weights='DEFAULT'),
+	'dropout_prob': 0.1,
 }
 params['parent'].classifier[2] = nn.Identity()  # disable parent classifier
 params['parent_out'] = lambda x='parent': summary(params[x], (1, 3, 224, 224)).summary_list[-1].output_size[1]
 params['name'] = lambda: stuff.generate_name(params['parent_name'], params['dropout_prob'])
 
-def main(params: dict = params, data=None, verbose=0) -> None:
+def main(params: dict = params, data=None, verbose=0):
 	# reproducibility
 	stuff.manual_seed(64, True)
 	# load data
-	data_train, data_val = data or load_data()
+	if type(data) in (list, None):
+		data_train, data_val = data or load_data()
+	else:
+		data_train, data_val = data, None
 	# init model
 	model = Model(params['dropout_prob'], params['parent'], params['parent_out']()).to('cuda')
 	# debug
 	if verbose:
 		print(summary(model, (1, 3, 224, 224)))
 	# training
-	train(params['name'](), model, params['num_epochs'], params['batch_size'], data_train, data_val, params['loss'], params['opt'])
+	return train(params['name'](), model, params['num_epochs'], params['batch_size'], data_train, data_val, params['loss'], params['opt'])
 def load_data(files: Sequence[str] = ['train', 'valid'], path: str = 'data/', compression='') -> Iterator[Dataset]:
 	'loads processed data'
 	import pickle
@@ -95,9 +98,12 @@ def load_data(files: Sequence[str] = ['train', 'valid'], path: str = 'data/', co
 def train(name: str, model: nn.Module, num_epochs: int, batch_size: int, data_train, data_val, loss, opt, verbose: int = 0, float16: bool = True):
 	# "helpers"
 	Path('models').mkdir(exist_ok=True)
-	callbacks = [ShowGraphCallback(), EarlyStoppingCallback(patience=8), CSVLogger('models/' + name + '.csv'), SaveModelCallback(fname=name)]
+	callbacks = [ShowGraphCallback(), EarlyStoppingCallback(patience=4), CSVLogger('models/' + name + '.csv'), SaveModelCallback(fname=name, with_opt=True)]
 	# wrapping data
-	data = ImageDataLoaders(DataLoader(data_train, batch_size, shuffle=True), DataLoader(data_val, batch_size, shuffle=True))
+	if data_val is not None:
+		data = ImageDataLoaders(DataLoader(data_train, batch_size, shuffle=True), DataLoader(data_val, batch_size, shuffle=True))
+	else:
+		data = data_train
 	# wrapping optimizer
 	opt = wrap(OptimWrapper, opt=opt)
 	# defining learner and training, using mixed precision training to speed things ups
@@ -113,22 +119,20 @@ def train(name: str, model: nn.Module, num_epochs: int, batch_size: int, data_tr
 		for name, val in zip(learner.recorder.metric_names[1:], learner.recorder.values[-1]):
 			print(name, ': ', val, ', ', sep='', end='')
 	return learner
-def load_model(name: str, params: dict = params):
+def load_model(name: str, params: dict = params, device: str = 'cuda'):
 	# init model and train
-	model = Model(params['dropout_prob'], params['parent'], params['parent_out'])
+	model = Model(params['dropout_prob'], params['parent'], params['parent_out']())
 	# load model
-	model.load_state_dict(torch.load(f'models/{name}.pth'))
+	model.load_state_dict(torch.load(f'models/{name}.pth')['model'])
 	model.eval()
-	return model
-def test_model(name: str, params: dict = params):
+	return model.to(device)
+def test_model(params: dict = params):
 	# reproducibility
 	stuff.manual_seed(64, True)
 	# load data
 	data_test = list(load_data(['test'], compression=''))[0].to('images', torch.float32)
-	# init model
-	model = Model(params['dropout_prob'], params['parent'], params['parent_out'])
 	# load model
-	model.load_state_dict(torch.load(f'models/{name}.pth'))
+	model = load_model(params['name']())
 	data = DataLoaders(DataLoader(data_test, params['batch_size'], True), DataLoader(data_test, params['batch_size'], True))
 	learner = Learner(data, model, params['loss'](), params['opt'], metrics=accuracy)
 	# test model
